@@ -19,6 +19,7 @@
 
 package com.netflix.iceberg;
 
+import com.netflix.iceberg.encryption.KeyManager;
 import com.netflix.iceberg.io.FileIO;
 import java.util.UUID;
 
@@ -59,6 +60,16 @@ public interface TableOperations {
    * @return a {@link FileIO} to read and write table data and metadata files
    */
   FileIO io();
+
+  /**
+   * Return a {@link KeyManager} to manage secret key material for encrypting and decrypting table
+   * data files.
+   * <p>
+   * On the read side, the key manager is requested when data files have attached encryption
+   * metadata tags. On the write side, the key manager is requested when the table is configured
+   * to encrypt new data files within integrations that support encryption.
+   */
+  KeyManager keys();
 
   /**
    * Given the name of a metadata file, obtain the full path of that file using an appropriate base

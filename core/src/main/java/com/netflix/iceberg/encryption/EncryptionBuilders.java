@@ -26,13 +26,13 @@ import java.nio.ByteBuffer;
 
 public class EncryptionBuilders {
 
-  public static EncryptionKeyMetadata of(ByteBuffer keyMetadata) {
+  public static EncryptionKeyMetadata keyMetadata(ByteBuffer keyMetadata) {
     return GenericEncryptionKeyMetadata.of(
         ByteBuffers.toByteArray(
             Preconditions.checkNotNull(keyMetadata, "Key metadata should not be null.")));
   }
 
-  public static EncryptionKeyMetadata of(byte[] keyMetadata) {
+  public static EncryptionKeyMetadata keyMetadata(byte[] keyMetadata) {
     return GenericEncryptionKeyMetadata.of(
         Preconditions.checkNotNull(
             keyMetadata, "Key metadata should not be null."));
@@ -40,6 +40,10 @@ public class EncryptionBuilders {
 
   public static FileEncryptionMetadataBuilder newFileEncryptionMetadataBuilder() {
     return new FileEncryptionMetadataBuilder();
+  }
+
+  public static PhysicalEncryptionKeyBuilder newPhysicalEncryptionKeyBuilder() {
+    return new PhysicalEncryptionKeyBuilder();
   }
 
   public static final class FileEncryptionMetadataBuilder {

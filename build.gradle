@@ -52,6 +52,7 @@ subprojects {
 
   repositories {
     mavenCentral()
+    maven { url  "http://palantir.bintray.com/releases" }
     mavenLocal()
   }
 
@@ -71,8 +72,9 @@ subprojects {
     orcVersion = '1.4.2'
     parquetVersion = '1.10.0'
     hiveVersion = '3.1.0'
+    cryptoVersion = '2.6.0'
 
-    jacksonVersion = '2.6.7'
+    jacksonVersion = '2.9.7'
 
     scalaVersion = '2.11'
     sparkVersion = '2.4.0'
@@ -117,6 +119,10 @@ project(':iceberg-core') {
 
     compile "com.fasterxml.jackson.core:jackson-databind:$jacksonVersion"
     compile "com.fasterxml.jackson.core:jackson-core:$jacksonVersion"
+    compile("com.palantir.hadoop-crypto2:hadoop-crypto:$cryptoVersion") {
+      exclude group: 'org.apache.avro', module: 'avro'
+      exclude group: 'org.slf4j', module: 'slf4j-log4j12'
+    }
     compileOnly("org.apache.hadoop:hadoop-client:$hadoopVersion") {
       exclude group: 'org.apache.avro', module: 'avro'
       exclude group: 'org.slf4j', module: 'slf4j-log4j12'
@@ -197,6 +203,8 @@ project(':iceberg-spark') {
     compile project(':iceberg-common')
     compile project(':iceberg-core')
     compile project(':iceberg-parquet')
+
+    compile "com.fasterxml.jackson.module:jackson-module-scala_2.11:$jacksonVersion"
 
     compileOnly "org.apache.avro:avro:$avroVersion"
     compileOnly("org.apache.spark:spark-hive_$scalaVersion:$sparkVersion") {
