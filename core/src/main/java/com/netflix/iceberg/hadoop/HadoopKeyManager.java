@@ -26,6 +26,8 @@ import com.netflix.iceberg.encryption.EncryptionBuilders;
 import com.netflix.iceberg.encryption.EncryptionKeyMetadata;
 import com.netflix.iceberg.encryption.KeyManager;
 import com.netflix.iceberg.encryption.PhysicalEncryptionKey;
+import com.palantir.crypto2.cipher.SeekableCipher;
+import com.palantir.crypto2.cipher.SeekableCipherFactory;
 import com.palantir.crypto2.hadoop.FileKeyStorageStrategy;
 import com.palantir.crypto2.keys.KeyMaterial;
 import com.palantir.crypto2.keys.KeyPairs;
@@ -65,48 +67,24 @@ class HadoopKeyManager implements KeyManager {
   public static final String PRIVATE_KEY_CONF = "iceberg.fs.encrypt.key.private";
 
   private final SerializableConfiguration conf;
-  private final String keyAlgorithm;
-  private final int newKeySize;
-  private final int newIvSize;
+  private final String cipherAlgorithm;
   private transient Map<String, KeyStorageStrategy> fsSchemesToKeyStores;
 
   public static HadoopKeyManager fromTableProperties(
       Configuration conf, Map<String, String> tableProperties) {
-    String keyAlgorithm = tableProperties.getOrDefault(
-        TableProperties.WRITE_ENCRYPTION_KEY_ALGORITHM,
-        TableProperties.DEFAULT_WRITE_ENCRYPTION_KEY_ALGORITHM);
-    int newKeySize = Integer.parseInt(
-        tableProperties.getOrDefault(
-            TableProperties.WRITE_ENCRYPTION_NEW_KEY_SIZE,
-            String.valueOf(TableProperties.DEFAULT_WRITE_ENCRYPTION_NEW_KEY_SIZE)));
-    int newIvSize = Integer.parseInt(
-        tableProperties.getOrDefault(
-            TableProperties.WRITE_ENCRYPTION_IV_SIZE,
-            String.valueOf(TableProperties.DEFAULT_WRITE_ENCRYPTION_IV_SIZE)));
-    Preconditions.checkState(
-        newKeySize >= 256,
-        "Key size must be >= 256, got: %d",
-        newKeySize);
-    Preconditions.checkState(
-        newIvSize >= 128,
-        "Iv size must be >= 128, got: %d",
-        newIvSize);
+    String cipherAlgorithm = tableProperties.getOrDefault(
+        TableProperties.CIPHER_ALGORITHM,
+        TableProperties.DEFAULT_CIPHER_ALGORITHM);
     Preconditions.checkNotNull(
         conf.get(PUBLIC_KEY_CONF),
         "Public key must be provided via %s in the Hadoop configuration.",
         PUBLIC_KEY_CONF);
-    return new HadoopKeyManager(conf, keyAlgorithm, newKeySize, newIvSize);
+    return new HadoopKeyManager(conf, cipherAlgorithm);
   }
 
-  public HadoopKeyManager(
-      Configuration conf,
-      String keyGenerationAlgorithm,
-      int newKeySize,
-      int newIvSize) {
+  public HadoopKeyManager(Configuration conf, String cipherAlgorithm) {
     this.conf = new SerializableConfiguration(conf);
-    this.keyAlgorithm = keyGenerationAlgorithm;
-    this.newKeySize = newKeySize;
-    this.newIvSize = newIvSize;
+    this.cipherAlgorithm = cipherAlgorithm;
     this.fsSchemesToKeyStores = Maps.newConcurrentMap();
   }
 
@@ -123,10 +101,10 @@ class HadoopKeyManager implements KeyManager {
     return toIcebergPhysicalKey(keyMetadata, storeKey);
   }
 
-  private PhysicalEncryptionKey toIcebergPhysicalKey(EncryptionKeyMetadata encryptionMetadata, KeyMaterial storeKey) {
-    return EncryptionBuilders.newPhysicalEncryptionKeyBuilder()
+  private PhysicalEncryptionKey toIcebergPhysicalKey(
+      EncryptionKeyMetadata encryptionMetadata, KeyMaterial storeKey) {
+    return EncryptionBuilders.physicalEncryptionKeyBuilder()
         .keyMetadata(encryptionMetadata)
-        .keyAlgorithm(storeKey.getSecretKey().getAlgorithm())
         .secretKeyBytes(storeKey.getSecretKey().getEncoded())
         .iv(storeKey.getIv())
         .build();
@@ -134,10 +112,13 @@ class HadoopKeyManager implements KeyManager {
 
   @Override
   public PhysicalEncryptionKey createAndStoreEncryptionKey(String path) {
-    EncryptionKeyMetadata keyMetadata = EncryptionBuilders.keyMetadata(
-        path.getBytes(StandardCharsets.UTF_8));
+    KeyMaterial newKey = SeekableCipherFactory.generateKeyMaterial(cipherAlgorithm);
+    EncryptionKeyMetadata keyMetadata = EncryptionBuilders.encryptionKeyMetadataBuilder()
+        .keyMetadata(path.getBytes(StandardCharsets.UTF_8))
+        .keyAlgorithm(newKey.getSecretKey().getAlgorithm())
+        .cipherAlgorithm(cipherAlgorithm)
+        .build();
     Path hadoopPath = new Path(path);
-    KeyMaterial newKey = KeyMaterials.generateKeyMaterial(keyAlgorithm, newKeySize, newIvSize);
     KeyStorageStrategy keyStore = fsSchemesToKeyStores.computeIfAbsent(
         hadoopPath.toUri().getScheme(),
         scheme -> initializeKeyStore(conf.get(), hadoopPath));
