@@ -19,6 +19,7 @@
 
 package com.netflix.iceberg;
 
+import com.netflix.iceberg.encryption.KeyManager;
 import com.netflix.iceberg.io.FileIO;
 import java.util.Map;
 
@@ -184,5 +185,13 @@ public interface Table {
    * @return a {@link FileIO} to read and write table data and metadata files
    */
   FileIO io();
+
+  /**
+   * Get a {@link com.netflix.iceberg.encryption.KeyManager} to manage encryption keys for this
+   * table's data files.
+   *
+   * @return a key manager for handling data encryption keys.
+   */
+  KeyManager keys();
 
 }

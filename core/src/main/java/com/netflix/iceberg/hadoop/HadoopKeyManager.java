@@ -26,6 +26,7 @@ import com.netflix.iceberg.encryption.EncryptionBuilders;
 import com.netflix.iceberg.encryption.EncryptionKeyMetadata;
 import com.netflix.iceberg.encryption.KeyManager;
 import com.netflix.iceberg.encryption.PhysicalEncryptionKey;
+import com.netflix.iceberg.exceptions.RuntimeIOException;
 import com.palantir.crypto2.cipher.SeekableCipher;
 import com.palantir.crypto2.cipher.SeekableCipherFactory;
 import com.palantir.crypto2.hadoop.FileKeyStorageStrategy;
@@ -58,7 +59,7 @@ import java.util.Map;
  *
  * TODO(#81) Provide a KMS-backed key manager out of the box as well.
  */
-class HadoopKeyManager implements KeyManager {
+public class HadoopKeyManager implements KeyManager {
 
   public static final String KEY_ENCRYPTION_ALGORITHM_CONF =
       "iceberg.fs.encrypt.key.encryptKeyAlgorithm";
@@ -75,10 +76,6 @@ class HadoopKeyManager implements KeyManager {
     String cipherAlgorithm = tableProperties.getOrDefault(
         TableProperties.CIPHER_ALGORITHM,
         TableProperties.DEFAULT_CIPHER_ALGORITHM);
-    Preconditions.checkNotNull(
-        conf.get(PUBLIC_KEY_CONF),
-        "Public key must be provided via %s in the Hadoop configuration.",
-        PUBLIC_KEY_CONF);
     return new HadoopKeyManager(conf, cipherAlgorithm);
   }
 
@@ -93,12 +90,35 @@ class HadoopKeyManager implements KeyManager {
     String keyMetadataAsString = StandardCharsets
         .UTF_8
         .decode(keyMetadata.keyMetadata()).toString();
-    Path keyMetadataAsPath = new Path(keyMetadataAsString);
-    KeyStorageStrategy keyStore = fsSchemesToKeyStores.computeIfAbsent(
-        keyMetadataAsPath.toUri().getScheme(),
-        scheme -> initializeKeyStore(conf.get(), keyMetadataAsPath));
+    KeyStorageStrategy keyStore = getKeyStore(keyMetadataAsString);
     KeyMaterial storeKey = keyStore.get(keyMetadataAsString);
     return toIcebergPhysicalKey(keyMetadata, storeKey);
+  }
+
+  @Override
+  public PhysicalEncryptionKey createAndStoreEncryptionKey(String path) {
+    KeyMaterial newKey = SeekableCipherFactory.generateKeyMaterial(cipherAlgorithm);
+    EncryptionKeyMetadata keyMetadata = EncryptionBuilders.encryptionKeyMetadataBuilder()
+        .keyMetadata(path.getBytes(StandardCharsets.UTF_8))
+        .keyAlgorithm(newKey.getSecretKey().getAlgorithm())
+        .cipherAlgorithm(cipherAlgorithm)
+        .build();
+    KeyStorageStrategy keyStore = getKeyStore(path);
+    keyStore.put(path, newKey);
+    return toIcebergPhysicalKey(keyMetadata, newKey);
+  }
+
+  private KeyStorageStrategy getKeyStore(String keyMetadataAsString) {
+    Path keyMetadataAsPath = new Path(keyMetadataAsString);
+    KeyStorageStrategy keyStore;
+    try {
+      keyStore = fsSchemesToKeyStores.computeIfAbsent(
+          keyMetadataAsPath.getFileSystem(conf.get()).getScheme(),
+          scheme -> initializeKeyStore(conf.get(), keyMetadataAsPath));
+    } catch (IOException e) {
+      throw new RuntimeIOException(e);
+    }
+    return keyStore;
   }
 
   private PhysicalEncryptionKey toIcebergPhysicalKey(
@@ -110,31 +130,21 @@ class HadoopKeyManager implements KeyManager {
         .build();
   }
 
-  @Override
-  public PhysicalEncryptionKey createAndStoreEncryptionKey(String path) {
-    KeyMaterial newKey = SeekableCipherFactory.generateKeyMaterial(cipherAlgorithm);
-    EncryptionKeyMetadata keyMetadata = EncryptionBuilders.encryptionKeyMetadataBuilder()
-        .keyMetadata(path.getBytes(StandardCharsets.UTF_8))
-        .keyAlgorithm(newKey.getSecretKey().getAlgorithm())
-        .cipherAlgorithm(cipherAlgorithm)
-        .build();
-    Path hadoopPath = new Path(path);
-    KeyStorageStrategy keyStore = fsSchemesToKeyStores.computeIfAbsent(
-        hadoopPath.toUri().getScheme(),
-        scheme -> initializeKeyStore(conf.get(), hadoopPath));
-    keyStore.put(path, newKey);
-    return toIcebergPhysicalKey(keyMetadata, newKey);
-  }
-
   private void readObject(ObjectInputStream input) throws IOException, ClassNotFoundException {
     input.defaultReadObject();
     fsSchemesToKeyStores = Maps.newConcurrentMap();
   }
 
   private static KeyStorageStrategy initializeKeyStore(Configuration conf, Path path) {
+    // Check lazily because we won't invoke the key manager unless we're told to encrypt something
+    // at the table level.
     String encryptKeyAlgorithm = conf.get(
         KEY_ENCRYPTION_ALGORITHM_CONF, KEY_ENCRYPTION_DEFAULT_ALGORITHM);
     String encodedPublicKey = conf.get(PUBLIC_KEY_CONF);
+    Preconditions.checkNotNull(
+        encodedPublicKey,
+        "Public key must be provided via %s in the Hadoop configuration.",
+        PUBLIC_KEY_CONF);
     // Private key can be null if only encrypting and writing.
     String encodedPrivateKey = conf.get(PRIVATE_KEY_CONF);
     KeyPair keyPair = KeyPairs.fromStrings(encodedPrivateKey, encodedPublicKey, encryptKeyAlgorithm);

@@ -19,6 +19,8 @@
 
 package com.netflix.iceberg.hadoop;
 
+import com.netflix.iceberg.encryption.CryptoStreamReader;
+import com.netflix.iceberg.encryption.PhysicalEncryptionKey;
 import com.netflix.iceberg.exceptions.RuntimeIOException;
 import com.netflix.iceberg.io.InputFile;
 import com.netflix.iceberg.io.SeekableInputStream;
@@ -40,6 +42,7 @@ public class HadoopInputFile implements InputFile {
   private final Configuration conf;
   private FileStatus stat = null;
   private Long length = null;
+  private final PhysicalEncryptionKey key;
 
   public static HadoopInputFile fromLocation(CharSequence location, Configuration conf) {
     Path path = new Path(location.toString());
@@ -83,6 +86,7 @@ public class HadoopInputFile implements InputFile {
     this.fs = fs;
     this.path = path;
     this.conf = conf;
+    this.key = null;
   }
 
   private HadoopInputFile(FileSystem fs, Path path, long length, Configuration conf) {
@@ -90,6 +94,7 @@ public class HadoopInputFile implements InputFile {
     this.path = path;
     this.conf = conf;
     this.length = length;
+    this.key = null;
   }
 
   private HadoopInputFile(FileSystem fs, FileStatus stat, Configuration conf) {
@@ -98,7 +103,20 @@ public class HadoopInputFile implements InputFile {
     this.stat = stat;
     this.conf = conf;
     this.length = stat.getLen();
+    this.key = null;
   }
+
+  private HadoopInputFile(
+      HadoopInputFile copy,
+      PhysicalEncryptionKey key) {
+    this.conf = copy.conf;
+    this.stat = copy.stat;
+    this.fs = copy.fs;
+    this.path = copy.path;
+    this.length = copy.length;
+    this.key = key;
+  }
+
 
   private FileStatus lazyStat() {
     if (stat == null) {
@@ -121,11 +139,20 @@ public class HadoopInputFile implements InputFile {
 
   @Override
   public SeekableInputStream newStream() {
+    SeekableInputStream input;
     try {
-      return HadoopStreams.wrap(fs.open(path));
+      input = HadoopStreams.wrap(fs.open(path));
     } catch (IOException e) {
       throw new RuntimeIOException(e, "Failed to open input stream for file: %s", path);
     }
+    if (key != null) {
+      input = CryptoStreamReader.decrypt(input, key);
+    }
+    return input;
+  }
+
+  public HadoopInputFile decrypt(PhysicalEncryptionKey key) {
+    return new HadoopInputFile(this, key);
   }
 
   public Configuration getConf() {

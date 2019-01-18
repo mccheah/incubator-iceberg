@@ -88,4 +88,10 @@ public class TableProperties {
   // Algorithms are applied to newly generated keys from Iceberg's built-in key managers.
   public static final String CIPHER_ALGORITHM = "write.encryption.cipher.algorithm";
   public static final String DEFAULT_CIPHER_ALGORITHM = "AES/CTR/NoPadding";
+  public static final String WRITE_ENCRYPTION_CIPHER_ALGORITHM = "write.encryption.key.algorithm";
+  public static final String DEFAULT_WRITE_ENCRYPTION_CIPHER_ALGORITHM = "AES";
+  public static final String WRITE_ENCRYPTION_NEW_KEY_SIZE = "write.encryption.key.size";
+  public static final int DEFAULT_WRITE_ENCRYPTION_NEW_KEY_SIZE = 256;
+  public static final String WRITE_ENCRYPTION_IV_SIZE = "write.encryption.iv.size";
+  public static final int DEFAULT_WRITE_ENCRYPTION_IV_SIZE = 128;
 }

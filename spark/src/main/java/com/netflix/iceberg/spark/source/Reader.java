@@ -19,9 +19,15 @@
 
 package com.netflix.iceberg.spark.source;
 
+import com.google.common.base.Preconditions;
 import com.google.common.collect.Lists;
+import com.google.common.collect.Maps;
 import com.netflix.iceberg.CombinedScanTask;
 import com.netflix.iceberg.DataFile;
+import com.netflix.iceberg.encryption.CryptoStreamReader;
+import com.netflix.iceberg.encryption.EncryptionKeyMetadata;
+import com.netflix.iceberg.encryption.KeyManager;
+import com.netflix.iceberg.encryption.PhysicalEncryptionKey;
 import com.netflix.iceberg.io.FileIO;
 import com.netflix.iceberg.FileScanTask;
 import com.netflix.iceberg.PartitionField;
@@ -72,8 +78,13 @@ import java.io.Serializable;
 import java.nio.ByteBuffer;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.function.Function;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
+import java.util.stream.StreamSupport;
 
 import static com.google.common.collect.Iterators.transform;
 import static com.netflix.iceberg.spark.SparkSchemaUtil.convert;
@@ -88,6 +99,7 @@ class Reader implements DataSourceReader, SupportsPushDownFilters, SupportsPushD
 
   private final Table table;
   private final FileIO fileIo;
+  private final KeyManager keyManager;
   private StructType requestedSchema = null;
   private List<Expression> filterExpressions = null;
   private Filter[] pushedFilters = NO_FILTERS;
@@ -101,6 +113,7 @@ class Reader implements DataSourceReader, SupportsPushDownFilters, SupportsPushD
     this.table = table;
     this.schema = table.schema();
     this.fileIo = table.io();
+    this.keyManager = table.keys();
   }
 
   private Schema lazySchema() {
@@ -133,7 +146,8 @@ class Reader implements DataSourceReader, SupportsPushDownFilters, SupportsPushD
 
     List<InputPartition<InternalRow>> readTasks = Lists.newArrayList();
     for (CombinedScanTask task : tasks()) {
-      readTasks.add(new ReadTask(task, tableSchemaString, expectedSchemaString, fileIo));
+      readTasks.add(new ReadTask(
+          task, tableSchemaString, expectedSchemaString, fileIo, keyManager));
     }
 
     return readTasks;
@@ -227,21 +241,40 @@ class Reader implements DataSourceReader, SupportsPushDownFilters, SupportsPushD
     private final String tableSchemaString;
     private final String expectedSchemaString;
     private final FileIO fileIo;
+    private final KeyManager keyManager;
 
     private transient Schema tableSchema = null;
     private transient Schema expectedSchema = null;
 
     private ReadTask(
-        CombinedScanTask task, String tableSchemaString, String expectedSchemaString, FileIO fileIo) {
+        CombinedScanTask task,
+        String tableSchemaString,
+        String expectedSchemaString,
+        FileIO fileIo,
+        KeyManager keyManager) {
       this.task = task;
       this.tableSchemaString = tableSchemaString;
       this.expectedSchemaString = expectedSchemaString;
       this.fileIo = fileIo;
+      this.keyManager = keyManager;
     }
 
     @Override
     public InputPartitionReader<InternalRow> createPartitionReader() {
-      return new TaskDataReader(task, lazyTableSchema(), lazyExpectedSchema(), fileIo);
+      Map<EncryptionKeyMetadataHashKey, PhysicalEncryptionKey> encryptionKeys =
+          StreamSupport.stream(keyManager.getEncryptionKeys(
+              task.files().stream()
+                  .map(FileScanTask::file)
+                  .map(DataFile::encryption)
+                  .filter(Objects::nonNull)
+                  .collect(Collectors.toList()))
+              .spliterator(),
+              false)
+              .collect(Collectors.toMap(
+                  encryptionKey -> new EncryptionKeyMetadataHashKey(encryptionKey.keyMetadata()),
+                  encryptionKey -> encryptionKey
+              ));
+      return new TaskDataReader(task, lazyTableSchema(), lazyExpectedSchema(), fileIo, encryptionKeys);
     }
 
     private Schema lazyTableSchema() {
@@ -269,16 +302,23 @@ class Reader implements DataSourceReader, SupportsPushDownFilters, SupportsPushD
     private final Schema tableSchema;
     private final Schema expectedSchema;
     private final FileIO fileIo;
+    private final Map<EncryptionKeyMetadataHashKey, PhysicalEncryptionKey> encryptionKeys;
 
     private Iterator<InternalRow> currentIterator = null;
     private Closeable currentCloseable = null;
     private InternalRow current = null;
 
-    public TaskDataReader(CombinedScanTask task, Schema tableSchema, Schema expectedSchema, FileIO fileIo) {
+    public TaskDataReader(
+        CombinedScanTask task,
+        Schema tableSchema,
+        Schema expectedSchema,
+        FileIO fileIo,
+        Map<EncryptionKeyMetadataHashKey, PhysicalEncryptionKey> encryptionKeys) {
       this.fileIo = fileIo;
       this.tasks = task.files().iterator();
       this.tableSchema = tableSchema;
       this.expectedSchema = expectedSchema;
+      this.encryptionKeys = encryptionKeys;
       // open last because the schemas and fileIo must be set
       this.currentIterator = open(tasks.next());
     }
@@ -386,6 +426,15 @@ class Reader implements DataSourceReader, SupportsPushDownFilters, SupportsPushD
 
     private Iterator<InternalRow> open(FileScanTask task, Schema readSchema) {
       InputFile location = fileIo.newInputFile(task.file().path().toString());
+      EncryptionKeyMetadata maybeKeyMetadata = task.file().encryption();
+      if (maybeKeyMetadata != null) {
+        PhysicalEncryptionKey encryptionKey = encryptionKeys.get(
+            new EncryptionKeyMetadataHashKey(maybeKeyMetadata));
+        Preconditions.checkNotNull(
+            encryptionKey, "Encryption key was not found from the key manager for file %s" +
+                " despite the fact that Iceberg believes the file is encrypted.", task.file().path());
+        location = CryptoStreamReader.decrypt(location, encryptionKey);
+      }
       CloseableIterable<InternalRow> iter;
       switch (task.file().format()) {
         case PARQUET:
@@ -520,6 +569,33 @@ class Reader implements DataSourceReader, SupportsPushDownFilters, SupportsPushD
     @Override
     public <T> void set(int pos, T value) {
       throw new UnsupportedOperationException("Not implemented: set");
+    }
+  }
+
+  // Thin wrapper around EncryptionKeyMetadata to ensure equals() and hashCode() are implemented
+  // consistently across implementations and object references.
+  private static class EncryptionKeyMetadataHashKey {
+    private final EncryptionKeyMetadata keyMetadata;
+
+    EncryptionKeyMetadataHashKey(EncryptionKeyMetadata keyMetadata) {
+      this.keyMetadata = keyMetadata;
+    }
+
+    @Override
+    public boolean equals(Object other) {
+      if (!(other instanceof EncryptionKeyMetadataHashKey)) {
+        return false;
+      }
+      EncryptionKeyMetadataHashKey otherCasted = (EncryptionKeyMetadataHashKey) other;
+      return Objects.equals(keyMetadata.keyMetadata(), otherCasted.keyMetadata.keyMetadata())
+          && Objects.equals(keyMetadata.keyAlgorithm(), otherCasted.keyMetadata.keyAlgorithm())
+          && Objects.equals(keyMetadata.cipherAlgorithm(), otherCasted.keyMetadata.cipherAlgorithm());
+    }
+
+    @Override
+    public int hashCode() {
+      return com.google.common.base.Objects.hashCode(
+          keyMetadata.keyMetadata(), keyMetadata.keyAlgorithm(), keyMetadata.cipherAlgorithm());
     }
   }
 }

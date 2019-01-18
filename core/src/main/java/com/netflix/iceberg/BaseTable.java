@@ -19,6 +19,7 @@
 
 package com.netflix.iceberg;
 
+import com.netflix.iceberg.encryption.KeyManager;
 import com.netflix.iceberg.io.FileIO;
 import java.util.Map;
 
@@ -144,6 +145,11 @@ public class BaseTable implements Table, HasTableOperations {
   @Override
   public FileIO io() {
     return operations().io();
+  }
+
+  @Override
+  public KeyManager keys() {
+    return operations().keys();
   }
 
   @Override

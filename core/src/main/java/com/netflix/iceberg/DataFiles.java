@@ -21,10 +21,12 @@ package com.netflix.iceberg;
 
 import com.google.common.base.Preconditions;
 import com.netflix.iceberg.encryption.EncryptionKeyMetadata;
+import com.netflix.iceberg.encryption.PhysicalEncryptionKey;
 import com.netflix.iceberg.hadoop.HadoopInputFile;
 import com.netflix.iceberg.io.InputFile;
 import com.netflix.iceberg.types.Conversions;
 import org.apache.hadoop.fs.FileStatus;
+
 import java.nio.ByteBuffer;
 import java.util.List;
 import java.util.Locale;
@@ -135,11 +137,31 @@ public class DataFiles {
         location, format, partition, file.getLength(), DEFAULT_BLOCK_SIZE, metrics);
   }
 
+  public static DataFile fromInputFile(
+      InputFile file, PartitionData partition, Metrics metrics, EncryptionKeyMetadata key) {
+    if (file instanceof HadoopInputFile) {
+      return fromStat(((HadoopInputFile) file).getStat(), partition, metrics, key);
+    }
+
+    String location = file.location();
+    FileFormat format = FileFormat.fromFileName(location);
+    return new GenericDataFile(
+        location, format, partition, file.getLength(), DEFAULT_BLOCK_SIZE, metrics, key);
+  }
+
   public static DataFile fromStat(FileStatus stat, PartitionData partition, Metrics metrics) {
     String location = stat.getPath().toString();
     FileFormat format = FileFormat.fromFileName(location);
     return new GenericDataFile(
         location, format, partition, stat.getLen(), stat.getBlockSize(), metrics);
+  }
+
+  public static DataFile fromStat(
+      FileStatus stat, PartitionData partition, Metrics metrics, EncryptionKeyMetadata key) {
+    String location = stat.getPath().toString();
+    FileFormat format = FileFormat.fromFileName(location);
+    return new GenericDataFile(
+        location, format, partition, stat.getLen(), stat.getBlockSize(), metrics, key);
   }
 
   public static DataFile fromParquetInputFile(InputFile file,
@@ -230,6 +252,7 @@ public class DataFiles {
       this.nullValueCounts = toCopy.nullValueCounts();
       this.lowerBounds = toCopy.lowerBounds();
       this.upperBounds = toCopy.upperBounds();
+      this.encryption = toCopy.encryption() == null ? null : toCopy.encryption().copy();
       return this;
     }
 

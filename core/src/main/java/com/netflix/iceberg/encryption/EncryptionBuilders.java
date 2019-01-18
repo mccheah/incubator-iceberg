@@ -73,6 +73,8 @@ public class EncryptionBuilders {
     private EncryptionKeyMetadata keyMetadata;
     private byte[] iv;
     private byte[] secretKeyBytes;
+    private String keyAlgorithm;
+    private String cipherAlgorithm;
 
     public PhysicalEncryptionKeyBuilder keyMetadata(EncryptionKeyMetadata keyMetadata) {
       this.keyMetadata = keyMetadata;
@@ -98,6 +100,12 @@ public class EncryptionBuilders {
     public PhysicalEncryptionKeyBuilder secretKeyBytes(ByteBuffer secretKeyBytes) {
       return secretKeyBytes(ByteBuffers.toByteArray(
           Preconditions.checkNotNull(secretKeyBytes, "Secret key bytes should not be null.")));
+    }
+
+    public PhysicalEncryptionKeyBuilder cipherAlgorithm(String cipherAlgorithm) {
+      this.cipherAlgorithm = Preconditions.checkNotNull(
+          cipherAlgorithm, "Cipher algorithm cannot be null.");
+      return this;
     }
 
     public PhysicalEncryptionKey build() {

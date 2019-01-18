@@ -7,7 +7,6 @@ import com.netflix.iceberg.util.ByteBuffers;
 import org.apache.avro.Schema;
 import org.apache.avro.generic.IndexedRecord;
 import org.apache.avro.specific.SpecificData;
-import sun.security.krb5.EncryptionKey;
 
 import java.io.Serializable;
 import java.nio.ByteBuffer;
@@ -66,11 +65,12 @@ public class GenericEncryptionKeyMetadata implements
     this.keyMetadata = keyMetadata;
     this.cipherAlgorithm = cipherAlgorithm;
     this.keyAlgorithm = keyAlgorithm;
+    this.avroSchema = AVRO_SCHEMA;
   }
 
   @Override
   public ByteBuffer keyMetadata() {
-    return ByteBuffer.wrap(keyMetadata).asReadOnlyBuffer();
+    return ByteBuffer.wrap(keyMetadata);
   }
 
   @Override
@@ -148,6 +148,6 @@ public class GenericEncryptionKeyMetadata implements
 
   @Override
   public Schema getSchema() {
-    return null;
+    return avroSchema;
   }
 }

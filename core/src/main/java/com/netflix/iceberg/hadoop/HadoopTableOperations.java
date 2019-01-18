@@ -20,6 +20,8 @@
 package com.netflix.iceberg.hadoop;
 
 import com.google.common.base.Preconditions;
+import com.google.common.collect.ImmutableMap;
+import com.netflix.iceberg.encryption.KeyManager;
 import com.netflix.iceberg.io.FileIO;
 import com.netflix.iceberg.TableMetadata;
 import com.netflix.iceberg.TableMetadataParser;
@@ -155,6 +157,13 @@ public class HadoopTableOperations implements TableOperations {
       defaultFileIo = new HadoopFileIO(conf);
     }
     return defaultFileIo;
+  }
+
+  @Override
+  public KeyManager keys() {
+    return HadoopKeyManager.fromTableProperties(
+        conf,
+        current() == null ? ImmutableMap.of() : currentMetadata.properties());
   }
 
   @Override

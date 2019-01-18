@@ -20,8 +20,11 @@
 package com.netflix.iceberg;
 
 import com.google.common.base.Objects;
+import com.google.common.collect.ImmutableMap;
+import com.netflix.iceberg.encryption.KeyManager;
 import com.netflix.iceberg.exceptions.RuntimeIOException;
 import com.netflix.iceberg.hadoop.HadoopFileIO;
+import com.netflix.iceberg.hadoop.HadoopKeyManager;
 import com.netflix.iceberg.io.FileIO;
 import com.netflix.iceberg.io.OutputFile;
 import com.netflix.iceberg.util.Tasks;
@@ -133,6 +136,12 @@ public abstract class BaseMetastoreTableOperations implements TableOperations {
   @Override
   public FileIO io() {
     return fileIo;
+  }
+
+  @Override
+  public KeyManager keys() {
+    return HadoopKeyManager.fromTableProperties(
+        conf, currentMetadata == null ? ImmutableMap.of() : currentMetadata.properties());
   }
 
   private String newTableMetadataFilePath(TableMetadata meta, int newVersion) {

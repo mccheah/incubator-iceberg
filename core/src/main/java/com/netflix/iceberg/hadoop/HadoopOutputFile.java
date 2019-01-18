@@ -19,6 +19,8 @@
 
 package com.netflix.iceberg.hadoop;
 
+import com.netflix.iceberg.encryption.CryptoStreamWriter;
+import com.netflix.iceberg.encryption.PhysicalEncryptionKey;
 import com.netflix.iceberg.exceptions.AlreadyExistsException;
 import com.netflix.iceberg.exceptions.RuntimeIOException;
 import com.netflix.iceberg.io.InputFile;
@@ -28,6 +30,7 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileAlreadyExistsException;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
+
 import java.io.IOException;
 
 /**
@@ -40,32 +43,54 @@ public class HadoopOutputFile implements OutputFile {
 
   private final Path path;
   private final Configuration conf;
+  private final PhysicalEncryptionKey key;
+
+  private HadoopOutputFile(Path path, Configuration conf, PhysicalEncryptionKey key) {
+    this.path = path;
+    this.conf = conf;
+    this.key = key;
+  }
 
   private HadoopOutputFile(Path path, Configuration conf) {
     this.path = path;
     this.conf = conf;
+    this.key = null;
+  }
+
+  private HadoopOutputFile(HadoopOutputFile toCopy, PhysicalEncryptionKey key) {
+    this(toCopy.path, toCopy.conf, key);
   }
 
   @Override
   public PositionOutputStream create() {
     FileSystem fs = Util.getFS(path, conf);
+    PositionOutputStream stream;
     try {
-      return HadoopStreams.wrap(fs.create(path, false /* createOrOverwrite */));
+      stream = HadoopStreams.wrap(fs.create(path, false /* createOrOverwrite */));
     } catch (FileAlreadyExistsException e) {
       throw new AlreadyExistsException(e, "Path already exists: %s", path);
     } catch (IOException e) {
       throw new RuntimeIOException(e, "Failed to create file: %s", path);
     }
+    if (key != null) {
+      stream = CryptoStreamWriter.encrypt(stream, key);
+    }
+    return stream;
   }
 
   @Override
   public PositionOutputStream createOrOverwrite() {
     FileSystem fs = Util.getFS(path, conf);
+    PositionOutputStream stream;
     try {
-      return HadoopStreams.wrap(fs.create(path, true /* createOrOverwrite */ ));
+      stream = HadoopStreams.wrap(fs.create(path, true /* createOrOverwrite */ ));
     } catch (IOException e) {
       throw new RuntimeIOException(e, "Failed to create file: %s", path);
     }
+    if (key != null) {
+      stream = CryptoStreamWriter.encrypt(stream, key);
+    }
+    return stream;
   }
 
   public Path getPath() {
@@ -83,11 +108,20 @@ public class HadoopOutputFile implements OutputFile {
 
   @Override
   public InputFile toInputFile() {
-    return HadoopInputFile.fromPath(path, conf);
+    HadoopInputFile base = HadoopInputFile.fromPath(path, conf);
+    if (key != null) {
+      return base.decrypt(key);
+    } else {
+      return base;
+    }
   }
 
   @Override
   public String toString() {
     return location();
+  }
+
+  public HadoopOutputFile encrypt(PhysicalEncryptionKey key) {
+    return new HadoopOutputFile(this, key);
   }
 }

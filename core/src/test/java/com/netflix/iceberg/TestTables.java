@@ -21,13 +21,31 @@ package com.netflix.iceberg;
 
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Maps;
+import com.netflix.iceberg.encryption.EncryptionBuilders;
+import com.netflix.iceberg.encryption.EncryptionKeyMetadata;
+import com.netflix.iceberg.encryption.KeyManager;
+import com.netflix.iceberg.encryption.PhysicalEncryptionKey;
 import com.netflix.iceberg.exceptions.AlreadyExistsException;
 import com.netflix.iceberg.exceptions.CommitFailedException;
 import com.netflix.iceberg.exceptions.RuntimeIOException;
 import com.netflix.iceberg.io.FileIO;
 import com.netflix.iceberg.io.InputFile;
 import com.netflix.iceberg.io.OutputFile;
+import com.netflix.iceberg.util.ByteBuffers;
+import com.palantir.crypto2.cipher.AesCtrCipher;
+import com.palantir.crypto2.cipher.SeekableCipherFactory;
+import com.palantir.crypto2.keys.KeyMaterial;
+
+import java.io.BufferedReader;
+import java.io.BufferedWriter;
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.io.OutputStreamWriter;
+import java.nio.charset.StandardCharsets;
+import java.util.Base64;
 import java.util.Map;
 
 import static com.netflix.iceberg.TableMetadata.newTableMetadata;
@@ -180,6 +198,11 @@ public class TestTables {
     }
 
     @Override
+    public KeyManager keys() {
+      return new LocalKeyManager();
+    }
+
+    @Override
     public String metadataFileLocation(String fileName) {
       return new File(metadata, fileName).getAbsolutePath();
     }
@@ -211,4 +234,59 @@ public class TestTables {
       }
     }
   }
+
+  static class LocalKeyManager implements KeyManager {
+
+    @Override
+    public PhysicalEncryptionKey getEncryptionKey(EncryptionKeyMetadata encryptionMetadata) {
+      String keyMetadataPath = new String(
+          ByteBuffers.toByteArray(encryptionMetadata.keyMetadata()), StandardCharsets.UTF_8);
+      String keyFile = String.format("%s.key", keyMetadataPath);
+      byte[] secretKeyBytes;
+      byte[] iv;
+      try (FileInputStream keyStream = new FileInputStream(keyFile);
+           InputStreamReader keyStreamReader = new InputStreamReader(keyStream, StandardCharsets.UTF_8);
+           BufferedReader keyReader = new BufferedReader(keyStreamReader)) {
+        secretKeyBytes = Base64.getDecoder().decode(keyReader.readLine());
+        iv = Base64.getDecoder().decode(keyReader.readLine());
+      } catch (IOException e) {
+        throw new RuntimeException(e);
+      }
+      return EncryptionBuilders.physicalEncryptionKeyBuilder()
+          .keyMetadata(encryptionMetadata)
+          .secretKeyBytes(secretKeyBytes)
+          .iv(iv)
+          .build();
+    }
+
+    @Override
+    public PhysicalEncryptionKey createAndStoreEncryptionKey(String path) {
+      KeyMaterial newKey = SeekableCipherFactory.generateKeyMaterial(
+          AesCtrCipher.ALGORITHM);
+      EncryptionKeyMetadata keyMetadata = EncryptionBuilders.encryptionKeyMetadataBuilder()
+          .keyMetadata(path.getBytes(StandardCharsets.UTF_8))
+          .keyAlgorithm(newKey.getSecretKey().getAlgorithm())
+          .cipherAlgorithm(AesCtrCipher.ALGORITHM)
+          .build();
+
+      String keyFile = String.format("%s.key", path);
+      try (FileOutputStream keyStream = new FileOutputStream(new File(keyFile));
+           OutputStreamWriter keyStreamWriter =
+               new OutputStreamWriter(keyStream, StandardCharsets.UTF_8);
+           BufferedWriter keyWriter = new BufferedWriter(keyStreamWriter)) {
+        keyWriter.write(
+            Base64.getEncoder().encodeToString(newKey.getSecretKey().getEncoded()));
+        keyWriter.newLine();
+        keyWriter.write(Base64.getEncoder().encodeToString(newKey.getIv()));
+      } catch (IOException e) {
+        throw new RuntimeIOException(e);
+      }
+      return EncryptionBuilders.physicalEncryptionKeyBuilder()
+          .keyMetadata(keyMetadata)
+          .secretKeyBytes(newKey.getSecretKey().getEncoded())
+          .iv(newKey.getIv())
+          .build();
+    }
+  }
+
 }

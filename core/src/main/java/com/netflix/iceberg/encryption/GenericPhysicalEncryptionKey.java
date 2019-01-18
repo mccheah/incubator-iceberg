@@ -27,7 +27,7 @@ class GenericPhysicalEncryptionKey implements PhysicalEncryptionKey {
   private final byte[] iv;
   private final EncryptionKeyMetadata encryptionKeyMetadata;
 
-  public GenericPhysicalEncryptionKey(
+  GenericPhysicalEncryptionKey(
       byte[] secretKeyBytes,
       byte[] iv,
       EncryptionKeyMetadata encryptionKeyMetadata) {
@@ -50,5 +50,4 @@ class GenericPhysicalEncryptionKey implements PhysicalEncryptionKey {
   public EncryptionKeyMetadata keyMetadata() {
     return encryptionKeyMetadata;
   }
-
 }
