@@ -27,19 +27,18 @@ import com.netflix.iceberg.encryption.EncryptionKeyMetadata;
 import com.netflix.iceberg.encryption.KeyManager;
 import com.netflix.iceberg.encryption.PhysicalEncryptionKey;
 import com.netflix.iceberg.exceptions.RuntimeIOException;
-import com.palantir.crypto2.cipher.SeekableCipher;
 import com.palantir.crypto2.cipher.SeekableCipherFactory;
 import com.palantir.crypto2.hadoop.FileKeyStorageStrategy;
 import com.palantir.crypto2.keys.KeyMaterial;
 import com.palantir.crypto2.keys.KeyPairs;
 import com.palantir.crypto2.keys.KeyStorageStrategy;
-import com.palantir.crypto2.keys.serialization.KeyMaterials;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 
 import java.io.IOException;
 import java.io.ObjectInputStream;
+import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.security.KeyPair;
 import java.util.Map;
@@ -69,7 +68,7 @@ public class HadoopKeyManager implements KeyManager {
 
   private final SerializableConfiguration conf;
   private final String cipherAlgorithm;
-  private transient Map<String, KeyStorageStrategy> fsSchemesToKeyStores;
+  private transient Map<URI, KeyStorageStrategy> fsUrisToKeyStores;
 
   public static HadoopKeyManager fromTableProperties(
       Configuration conf, Map<String, String> tableProperties) {
@@ -82,7 +81,7 @@ public class HadoopKeyManager implements KeyManager {
   public HadoopKeyManager(Configuration conf, String cipherAlgorithm) {
     this.conf = new SerializableConfiguration(conf);
     this.cipherAlgorithm = cipherAlgorithm;
-    this.fsSchemesToKeyStores = Maps.newConcurrentMap();
+    this.fsUrisToKeyStores = Maps.newConcurrentMap();
   }
 
   @Override
@@ -112,8 +111,8 @@ public class HadoopKeyManager implements KeyManager {
     Path keyMetadataAsPath = new Path(keyMetadataAsString);
     KeyStorageStrategy keyStore;
     try {
-      keyStore = fsSchemesToKeyStores.computeIfAbsent(
-          keyMetadataAsPath.getFileSystem(conf.get()).getScheme(),
+      keyStore = fsUrisToKeyStores.computeIfAbsent(
+          keyMetadataAsPath.getFileSystem(conf.get()).getUri(),
           scheme -> initializeKeyStore(conf.get(), keyMetadataAsPath));
     } catch (IOException e) {
       throw new RuntimeIOException(e);
@@ -132,7 +131,7 @@ public class HadoopKeyManager implements KeyManager {
 
   private void readObject(ObjectInputStream input) throws IOException, ClassNotFoundException {
     input.defaultReadObject();
-    fsSchemesToKeyStores = Maps.newConcurrentMap();
+    fsUrisToKeyStores = Maps.newConcurrentMap();
   }
 
   private static KeyStorageStrategy initializeKeyStore(Configuration conf, Path path) {
