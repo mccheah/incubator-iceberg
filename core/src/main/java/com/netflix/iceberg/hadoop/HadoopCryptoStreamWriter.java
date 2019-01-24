@@ -31,7 +31,7 @@ import com.palantir.crypto2.keys.serialization.KeyMaterials;
 import java.io.IOException;
 import java.io.OutputStream;
 
-public class CryptoStreamWriter {
+public class HadoopCryptoStreamWriter {
 
   public static PositionOutputStream encrypt(
       PositionOutputStream delegate, HadoopEncryptionKey key) {

@@ -19,7 +19,6 @@
 
 package com.netflix.iceberg.hadoop;
 
-import com.google.common.base.Preconditions;
 import com.netflix.iceberg.exceptions.AlreadyExistsException;
 import com.netflix.iceberg.exceptions.RuntimeIOException;
 import com.netflix.iceberg.io.InputFile;
@@ -77,7 +76,7 @@ public class HadoopOutputFile implements OutputFile {
       throw new RuntimeIOException(e, "Failed to create file: %s", path);
     }
     if (key != null) {
-      result = CryptoStreamWriter.encrypt(result, key);
+      result = HadoopCryptoStreamWriter.encrypt(result, key);
     }
     return result;
   }

@@ -106,7 +106,7 @@ public class HadoopEncryptionManager implements EncryptionManager {
         asIcebergEncryptionKey, location);
     KeyStorageStrategy keyStore = getKeyStore(location);
     keyStore.put(location, newKey);
-    OutputFile encryptingOutput = CryptoStreamWriter.encrypt(rawOutput, asIcebergEncryptionKey);
+    OutputFile encryptingOutput = HadoopCryptoStreamWriter.encrypt(rawOutput, asIcebergEncryptionKey);
     return EncryptedOutputFiles.of(encryptingOutput, keyMetadata);
   }
 
