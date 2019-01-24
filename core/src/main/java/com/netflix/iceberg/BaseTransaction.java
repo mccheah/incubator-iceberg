@@ -22,6 +22,7 @@ package com.netflix.iceberg;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
+import com.netflix.iceberg.encryption.EncryptionManager;
 import com.netflix.iceberg.exceptions.CommitFailedException;
 import com.netflix.iceberg.io.FileIO;
 import com.netflix.iceberg.util.Tasks;
@@ -283,6 +284,11 @@ class BaseTransaction implements Transaction {
     }
 
     @Override
+    public EncryptionManager encryption() {
+      return ops.encryption();
+    }
+
+    @Override
     public String metadataFileLocation(String fileName) {
       return ops.metadataFileLocation(fileName);
     }
@@ -391,6 +397,11 @@ class BaseTransaction implements Transaction {
     @Override
     public FileIO io() {
       return transactionOps.io();
+    }
+
+    @Override
+    public EncryptionManager encryption() {
+      return transactionOps.encryption();
     }
   }
 }

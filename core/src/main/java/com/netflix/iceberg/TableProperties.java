@@ -79,4 +79,19 @@ public class TableProperties {
 
   public static final String MANIFEST_LISTS_ENABLED = "write.manifest-lists.enabled";
   public static final boolean MANIFEST_LISTS_ENABLED_DEFAULT = true;
+
+  // Denotes whether new data files in the table should be encrypted upon write.
+  // This only applies to files written after the property is set. Files previously written aren't
+  // retroactively encrypted to reflect this parameter.
+  public static final String WRITE_NEW_DATA_ENCRYPTED = "write.encryption.enabled";
+  public static final boolean WRITE_NEW_DATA_ENCRYPTED_DEFAULT = false;
+  // Algorithms are applied to newly generated keys from Iceberg's built-in key managers.
+  public static final String CIPHER_ALGORITHM = "write.encryption.cipher.algorithm";
+  public static final String DEFAULT_CIPHER_ALGORITHM = "AES/CTR/NoPadding";
+  public static final String WRITE_ENCRYPTION_CIPHER_ALGORITHM = "write.encryption.key.algorithm";
+  public static final String DEFAULT_WRITE_ENCRYPTION_CIPHER_ALGORITHM = "AES";
+  public static final String WRITE_ENCRYPTION_NEW_KEY_SIZE = "write.encryption.key.size";
+  public static final int DEFAULT_WRITE_ENCRYPTION_NEW_KEY_SIZE = 256;
+  public static final String WRITE_ENCRYPTION_IV_SIZE = "write.encryption.iv.size";
+  public static final int DEFAULT_WRITE_ENCRYPTION_IV_SIZE = 128;
 }

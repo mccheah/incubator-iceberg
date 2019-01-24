@@ -21,8 +21,6 @@ package com.netflix.iceberg.encryption;
 
 import com.netflix.iceberg.io.InputFile;
 
-import java.nio.ByteBuffer;
-
 /**
  * Thin wrapper around an {@link InputFile} instance that is encrypted.
  * <p>

@@ -20,6 +20,7 @@
 package com.netflix.iceberg;
 
 import com.google.common.collect.Maps;
+import com.netflix.iceberg.encryption.EncryptionManager;
 import com.netflix.iceberg.exceptions.RuntimeIOException;
 import com.netflix.iceberg.io.FileIO;
 import java.util.Map;
@@ -30,6 +31,7 @@ import java.io.IOException;
 class LocalTableOperations implements TableOperations {
   private final TemporaryFolder temp;
   private final FileIO io;
+  private final EncryptionManager encryption = new TestTables.LocalEncryptionManager();
 
   private final Map<String, String> createdMetadataFilePaths = Maps.newHashMap();
 
@@ -56,6 +58,11 @@ class LocalTableOperations implements TableOperations {
   @Override
   public FileIO io() {
     return io;
+  }
+
+  @Override
+  public EncryptionManager encryption() {
+    return encryption;
   }
 
   @Override

@@ -19,8 +19,13 @@
 
 package com.netflix.iceberg.spark.source;
 
+import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Maps;
 import com.netflix.iceberg.BaseTable;
+import com.netflix.iceberg.encryption.EncryptedInputFile;
+import com.netflix.iceberg.encryption.EncryptedOutputFile;
+import com.netflix.iceberg.encryption.EncryptionManager;
+import com.netflix.iceberg.hadoop.HadoopEncryptionManager;
 import com.netflix.iceberg.io.FileIO;
 import com.netflix.iceberg.Files;
 import com.netflix.iceberg.PartitionSpec;
@@ -33,7 +38,13 @@ import com.netflix.iceberg.exceptions.CommitFailedException;
 import com.netflix.iceberg.exceptions.RuntimeIOException;
 import com.netflix.iceberg.io.InputFile;
 import com.netflix.iceberg.io.OutputFile;
+import org.apache.hadoop.conf.Configuration;
+
 import java.io.File;
+import java.security.KeyPair;
+import java.security.KeyPairGenerator;
+import java.security.NoSuchAlgorithmException;
+import java.util.Base64;
 import java.util.Map;
 
 // TODO: Use the copy of this from core.
@@ -104,6 +115,7 @@ class TestTables {
     private TableMetadata current = null;
     private long lastSnapshotId = 0;
     private int failCommits = 0;
+    private final EncryptionManager encryptionManager = new LocalEncryptionManager();
 
     TestTableOperations(String tableName) {
       this.tableName = tableName;
@@ -161,6 +173,11 @@ class TestTables {
     }
 
     @Override
+    public EncryptionManager encryption() {
+      return encryptionManager;
+    }
+
+    @Override
     public String metadataFileLocation(String fileName) {
       return new File(new File(current.location(), "metadata"), fileName).getAbsolutePath();
     }
@@ -190,6 +207,38 @@ class TestTables {
       if (!new File(path).delete()) {
         throw new RuntimeIOException("Failed to delete file: " + path);
       }
+    }
+  }
+
+  static class LocalEncryptionManager implements EncryptionManager {
+    private static final KeyPair TEST_KEY_ENCRYPTION_PAIR;
+
+    static {
+      try {
+        TEST_KEY_ENCRYPTION_PAIR = KeyPairGenerator.getInstance("RSA").generateKeyPair();
+      } catch (NoSuchAlgorithmException e) {
+        throw new RuntimeException(e);
+      }
+    }
+
+    private final EncryptionManager delegate;
+    public LocalEncryptionManager() {
+      Configuration conf = new Configuration();
+      conf.set(HadoopEncryptionManager.PRIVATE_KEY_CONF,
+          Base64.getEncoder().encodeToString(TEST_KEY_ENCRYPTION_PAIR.getPrivate().getEncoded()));
+      conf.set(HadoopEncryptionManager.PUBLIC_KEY_CONF,
+          Base64.getEncoder().encodeToString(TEST_KEY_ENCRYPTION_PAIR.getPublic().getEncoded()));
+      this.delegate = HadoopEncryptionManager.fromTableProperties(conf, ImmutableMap.of());
+    }
+
+    @Override
+    public InputFile decrypt(EncryptedInputFile encrypted) {
+      return delegate.decrypt(encrypted);
+    }
+
+    @Override
+    public EncryptedOutputFile encrypt(OutputFile rawOutput) {
+      return delegate.encrypt(rawOutput);
     }
   }
 }

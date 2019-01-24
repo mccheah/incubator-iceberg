@@ -21,8 +21,6 @@ package com.netflix.iceberg.encryption;
 
 import com.netflix.iceberg.io.OutputFile;
 
-import java.nio.ByteBuffer;
-
 /**
  * Thin wrapper around a {@link OutputFile} that is encrypting bytes written to the underlying
  * file system, via an encryption key that is symbolized by the enclosed

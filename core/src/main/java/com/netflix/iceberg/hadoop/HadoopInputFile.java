@@ -38,6 +38,7 @@ public class HadoopInputFile implements InputFile {
   private final FileSystem fs;
   private final Path path;
   private final Configuration conf;
+  private final HadoopEncryptionKey key;
   private FileStatus stat = null;
   private Long length = null;
 
@@ -83,6 +84,7 @@ public class HadoopInputFile implements InputFile {
     this.fs = fs;
     this.path = path;
     this.conf = conf;
+    this.key = null;
   }
 
   private HadoopInputFile(FileSystem fs, Path path, long length, Configuration conf) {
@@ -90,6 +92,7 @@ public class HadoopInputFile implements InputFile {
     this.path = path;
     this.conf = conf;
     this.length = length;
+    this.key = null;
   }
 
   private HadoopInputFile(FileSystem fs, FileStatus stat, Configuration conf) {
@@ -98,6 +101,16 @@ public class HadoopInputFile implements InputFile {
     this.stat = stat;
     this.conf = conf;
     this.length = stat.getLen();
+    this.key = null;
+  }
+
+  private HadoopInputFile(HadoopInputFile delegate, HadoopEncryptionKey key) {
+    this.fs = delegate.fs;
+    this.path = delegate.path;
+    this.stat = delegate.stat;
+    this.conf = delegate.conf;
+    this.length = delegate.length;
+    this.key = key;
   }
 
   private FileStatus lazyStat() {
@@ -121,11 +134,16 @@ public class HadoopInputFile implements InputFile {
 
   @Override
   public SeekableInputStream newStream() {
+    SeekableInputStream result;
     try {
-      return HadoopStreams.wrap(fs.open(path));
+      result = HadoopStreams.wrap(fs.open(path));
     } catch (IOException e) {
       throw new RuntimeIOException(e, "Failed to open input stream for file: %s", path);
     }
+    if (key != null) {
+      result = HadoopCryptoStreamReader.decrypt(result, key);
+    }
+    return result;
   }
 
   public Configuration getConf() {
@@ -134,6 +152,10 @@ public class HadoopInputFile implements InputFile {
 
   public FileStatus getStat() {
     return lazyStat();
+  }
+
+  public HadoopInputFile decrypt(HadoopEncryptionKey key) {
+    return new HadoopInputFile(this, key);
   }
 
   @Override

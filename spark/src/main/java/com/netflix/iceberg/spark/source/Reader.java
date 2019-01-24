@@ -19,9 +19,14 @@
 
 package com.netflix.iceberg.spark.source;
 
+import com.google.common.base.Preconditions;
+import com.google.common.collect.Iterators;
 import com.google.common.collect.Lists;
+import com.google.common.collect.Maps;
 import com.netflix.iceberg.CombinedScanTask;
 import com.netflix.iceberg.DataFile;
+import com.netflix.iceberg.encryption.EncryptedInputFiles;
+import com.netflix.iceberg.encryption.EncryptionManager;
 import com.netflix.iceberg.io.FileIO;
 import com.netflix.iceberg.FileScanTask;
 import com.netflix.iceberg.PartitionField;
@@ -44,6 +49,7 @@ import com.netflix.iceberg.spark.data.SparkAvroReader;
 import com.netflix.iceberg.spark.data.SparkParquetReaders;
 import com.netflix.iceberg.types.TypeUtil;
 import com.netflix.iceberg.types.Types;
+
 import org.apache.spark.sql.catalyst.InternalRow;
 import org.apache.spark.sql.catalyst.expressions.Attribute;
 import org.apache.spark.sql.catalyst.expressions.AttributeReference;
@@ -72,6 +78,7 @@ import java.io.Serializable;
 import java.nio.ByteBuffer;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.function.Function;
 
@@ -88,6 +95,7 @@ class Reader implements DataSourceReader, SupportsPushDownFilters, SupportsPushD
 
   private final Table table;
   private final FileIO fileIo;
+  private final EncryptionManager encryption;
   private StructType requestedSchema = null;
   private List<Expression> filterExpressions = null;
   private Filter[] pushedFilters = NO_FILTERS;
@@ -101,6 +109,7 @@ class Reader implements DataSourceReader, SupportsPushDownFilters, SupportsPushD
     this.table = table;
     this.schema = table.schema();
     this.fileIo = table.io();
+    this.encryption = table.encryption();
   }
 
   private Schema lazySchema() {
@@ -133,7 +142,7 @@ class Reader implements DataSourceReader, SupportsPushDownFilters, SupportsPushD
 
     List<InputPartition<InternalRow>> readTasks = Lists.newArrayList();
     for (CombinedScanTask task : tasks()) {
-      readTasks.add(new ReadTask(task, tableSchemaString, expectedSchemaString, fileIo));
+      readTasks.add(new ReadTask(task, tableSchemaString, expectedSchemaString, fileIo, encryption));
     }
 
     return readTasks;
@@ -227,21 +236,27 @@ class Reader implements DataSourceReader, SupportsPushDownFilters, SupportsPushD
     private final String tableSchemaString;
     private final String expectedSchemaString;
     private final FileIO fileIo;
+    private final EncryptionManager encryption;
 
     private transient Schema tableSchema = null;
     private transient Schema expectedSchema = null;
 
     private ReadTask(
-        CombinedScanTask task, String tableSchemaString, String expectedSchemaString, FileIO fileIo) {
+        CombinedScanTask task,
+        String tableSchemaString,
+        String expectedSchemaString,
+        FileIO fileIo,
+        EncryptionManager encryption) {
       this.task = task;
       this.tableSchemaString = tableSchemaString;
       this.expectedSchemaString = expectedSchemaString;
       this.fileIo = fileIo;
+      this.encryption = encryption;
     }
 
     @Override
     public InputPartitionReader<InternalRow> createPartitionReader() {
-      return new TaskDataReader(task, lazyTableSchema(), lazyExpectedSchema(), fileIo);
+      return new TaskDataReader(task, lazyTableSchema(), lazyExpectedSchema(), fileIo, encryption);
     }
 
     private Schema lazyTableSchema() {
@@ -265,6 +280,8 @@ class Reader implements DataSourceReader, SupportsPushDownFilters, SupportsPushD
         .impl(UnsafeProjection.class, InternalRow.class)
         .build();
 
+    private final Iterator<InputFile> allInputFiles;
+    private final Map<String, InputFile> pathsToInputFiles = Maps.newHashMap();
     private final Iterator<FileScanTask> tasks;
     private final Schema tableSchema;
     private final Schema expectedSchema;
@@ -274,9 +291,28 @@ class Reader implements DataSourceReader, SupportsPushDownFilters, SupportsPushD
     private Closeable currentCloseable = null;
     private InternalRow current = null;
 
-    public TaskDataReader(CombinedScanTask task, Schema tableSchema, Schema expectedSchema, FileIO fileIo) {
+    public TaskDataReader(
+        CombinedScanTask task,
+        Schema tableSchema,
+        Schema expectedSchema,
+        FileIO fileIo,
+        EncryptionManager encryption) {
       this.fileIo = fileIo;
       this.tasks = task.files().iterator();
+      Iterator<InputFile> encryptedInputFiles = encryption.decrypt(task.files().stream()
+          .map(FileScanTask::file)
+          .filter(file -> file.keyMetadata() != null)
+          .map(file ->
+              EncryptedInputFiles.of(
+                  fileIo.newInputFile(file.path().toString()),
+                  file.keyMetadata()))
+          .iterator());
+      Iterator<InputFile> plaintextInputFiles = task.files().stream()
+          .map(FileScanTask::file)
+          .filter(file -> file.keyMetadata() == null)
+          .map(file -> fileIo.newInputFile(file.path().toString()))
+          .iterator();
+      allInputFiles = Iterators.concat(encryptedInputFiles, plaintextInputFiles);
       this.tableSchema = tableSchema;
       this.expectedSchema = expectedSchema;
       // open last because the schemas and fileIo must be set
@@ -385,7 +421,7 @@ class Reader implements DataSourceReader, SupportsPushDownFilters, SupportsPushD
     }
 
     private Iterator<InternalRow> open(FileScanTask task, Schema readSchema) {
-      InputFile location = fileIo.newInputFile(task.file().path().toString());
+      InputFile location = openFileScan(task);
       CloseableIterable<InternalRow> iter;
       switch (task.file().format()) {
         case PARQUET:
@@ -404,6 +440,22 @@ class Reader implements DataSourceReader, SupportsPushDownFilters, SupportsPushD
       this.currentCloseable = iter;
 
       return iter.iterator();
+    }
+
+    private InputFile openFileScan(FileScanTask task) {
+      while (!pathsToInputFiles.containsKey(task.file().path().toString())
+              && allInputFiles.hasNext()) {
+        InputFile nextFile = allInputFiles.next();
+        pathsToInputFiles.put(nextFile.location(), nextFile);
+      }
+      InputFile fileToOpen = pathsToInputFiles.get(task.file().path().toString());
+      // The only way this can be null is if EncryptionManager#decrypt did not return an input file
+      // with this location.
+      Preconditions.checkNotNull(
+          fileToOpen,
+          "File with path %s was not returned by the encryption manager.",
+          task.file().path().toString());
+      return fileToOpen;
     }
 
     private CloseableIterable<InternalRow> newAvroIterable(InputFile location,

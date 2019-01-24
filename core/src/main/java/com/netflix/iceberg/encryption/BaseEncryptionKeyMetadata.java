@@ -21,10 +21,16 @@ package com.netflix.iceberg.encryption;
 
 import com.netflix.iceberg.util.ByteBuffers;
 
+import java.io.IOException;
+import java.io.ObjectInputStream;
+import java.io.ObjectOutputStream;
+import java.io.Serializable;
 import java.nio.ByteBuffer;
 
-class BaseEncryptionKeyMetadata implements EncryptionKeyMetadata {
-  private final ByteBuffer keyMetadata;
+class BaseEncryptionKeyMetadata implements EncryptionKeyMetadata, Serializable {
+  // Non final for serialization
+
+  private ByteBuffer keyMetadata;
 
   BaseEncryptionKeyMetadata(ByteBuffer keyMetadata) {
     this.keyMetadata = keyMetadata;
@@ -39,5 +45,20 @@ class BaseEncryptionKeyMetadata implements EncryptionKeyMetadata {
   public EncryptionKeyMetadata copy() {
     return new BaseEncryptionKeyMetadata(ByteBuffer.wrap(
         ByteBuffers.copy(keyMetadata)));
+  }
+
+  private void writeObject(ObjectOutputStream output) throws IOException {
+    ByteBuffer readOnly = keyMetadata.asReadOnlyBuffer();
+    output.writeInt(readOnly.limit());
+    for (int i = 0; i < readOnly.limit(); i++) {
+      output.write(readOnly.get());
+    }
+  }
+
+  private void readObject(ObjectInputStream input) throws IOException {
+    int keyMetadataSize = input.readInt();
+    byte[] keyMetadataBytes = new byte[keyMetadataSize];
+    input.read(keyMetadataBytes, 0, keyMetadataSize);
+    this.keyMetadata = ByteBuffer.wrap(keyMetadataBytes);
   }
 }

@@ -19,6 +19,7 @@
 
 package com.netflix.iceberg.hadoop;
 
+import com.google.common.base.Preconditions;
 import com.netflix.iceberg.exceptions.AlreadyExistsException;
 import com.netflix.iceberg.exceptions.RuntimeIOException;
 import com.netflix.iceberg.io.InputFile;
@@ -40,10 +41,18 @@ public class HadoopOutputFile implements OutputFile {
 
   private final Path path;
   private final Configuration conf;
+  private final HadoopEncryptionKey key;
 
   private HadoopOutputFile(Path path, Configuration conf) {
     this.path = path;
     this.conf = conf;
+    this.key = null;
+  }
+
+  private HadoopOutputFile(HadoopOutputFile delegate, HadoopEncryptionKey key) {
+    this.path = delegate.path;
+    this.conf = delegate.conf;
+    this.key = key;
   }
 
   @Override
@@ -61,11 +70,16 @@ public class HadoopOutputFile implements OutputFile {
   @Override
   public PositionOutputStream createOrOverwrite() {
     FileSystem fs = Util.getFS(path, conf);
+    PositionOutputStream result;
     try {
-      return HadoopStreams.wrap(fs.create(path, true /* createOrOverwrite */ ));
+      result = HadoopStreams.wrap(fs.create(path, true /* createOrOverwrite */ ));
     } catch (IOException e) {
       throw new RuntimeIOException(e, "Failed to create file: %s", path);
     }
+    if (key != null) {
+      result = CryptoStreamWriter.encrypt(result, key);
+    }
+    return result;
   }
 
   public Path getPath() {
@@ -74,6 +88,10 @@ public class HadoopOutputFile implements OutputFile {
 
   public Configuration getConf() {
     return conf;
+  }
+
+  public HadoopOutputFile encrypt(HadoopEncryptionKey key) {
+    return new HadoopOutputFile(this, key);
   }
 
   @Override
